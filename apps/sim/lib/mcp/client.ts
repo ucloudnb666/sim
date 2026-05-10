@@ -8,6 +8,7 @@
  * - Custom security/consent layer
  */
 
+import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
@@ -16,7 +17,9 @@ import {
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
 import { createLogger } from '@sim/logger'
+import { toError } from '@sim/utils/errors'
 import { getMaxExecutionTimeout } from '@/lib/core/execution-limits'
+import { McpOauthRedirectRequired } from '@/lib/mcp/oauth'
 import {
   type McpClientOptions,
   McpConnectionError,
@@ -42,6 +45,7 @@ export class McpClient {
   private connectionStatus: McpConnectionStatus
   private securityPolicy: McpSecurityPolicy
   private onToolsChanged?: McpToolsChangedCallback
+  private authProvider?: McpClientOptions['authProvider']
   private isConnected = false
 
   private static readonly SUPPORTED_VERSIONS = [
@@ -70,6 +74,7 @@ export class McpClient {
         maxToolExecutionsPerHour: 1000,
       }
       this.onToolsChanged = configOrOptions.onToolsChanged
+      this.authProvider = configOrOptions.authProvider
     } else {
       this.config = configOrOptions
       this.securityPolicy = securityPolicy ?? {
@@ -85,10 +90,13 @@ export class McpClient {
       throw new McpError('URL required for Streamable HTTP transport')
     }
 
+    if (this.config.authType === 'oauth' && this.authProvider == null) {
+      throw new McpError('OAuth MCP server requires an authProvider')
+    }
+    const useOauth = this.config.authType === 'oauth'
     this.transport = new StreamableHTTPClientTransport(new URL(this.config.url), {
-      requestInit: {
-        headers: this.config.headers,
-      },
+      authProvider: useOauth ? this.authProvider : undefined,
+      requestInit: { headers: this.config.headers },
     })
 
     this.client = new Client(
@@ -131,9 +139,13 @@ export class McpClient {
         protocolVersion: serverVersion,
       })
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      this.connectionStatus.lastError = errorMessage
       this.isConnected = false
+      if (error instanceof McpOauthRedirectRequired || error instanceof UnauthorizedError) {
+        this.connectionStatus.lastError = undefined
+        throw error
+      }
+      const errorMessage = toError(error).message
+      this.connectionStatus.lastError = errorMessage
       logger.error(`Failed to connect to MCP server ${this.config.name}:`, error)
       throw new McpConnectionError(errorMessage, this.config.name)
     }

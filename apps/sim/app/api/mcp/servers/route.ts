@@ -1,6 +1,6 @@
 import { AuditAction, AuditResourceType, recordAudit } from '@sim/audit'
 import { db } from '@sim/db'
-import { mcpServers } from '@sim/db/schema'
+import { mcpServerOauth, mcpServers } from '@sim/db/schema'
 import { createLogger } from '@sim/logger'
 import { toError } from '@sim/utils/errors'
 import { generateId } from '@sim/utils/id'
@@ -8,6 +8,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 import { createMcpServerBodySchema, deleteMcpServerByQuerySchema } from '@/lib/api/contracts/mcp'
 import { validationErrorResponse } from '@/lib/api/server'
+import { decryptSecret, encryptSecret } from '@/lib/core/security/encryption'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import {
   McpDnsResolutionError,
@@ -17,6 +18,7 @@ import {
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
 import { getParsedBody, withMcpAuth } from '@/lib/mcp/middleware'
+import { detectMcpAuthType } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
 import {
   createMcpErrorResponse,
@@ -37,10 +39,15 @@ export const GET = withRouteHandler(
     try {
       logger.info(`[${requestId}] Listing MCP servers for workspace ${workspaceId}`)
 
-      const servers = await db
+      const rows = await db
         .select()
         .from(mcpServers)
         .where(and(eq(mcpServers.workspaceId, workspaceId), isNull(mcpServers.deletedAt)))
+
+      const servers = rows.map(({ oauthClientSecret: _secret, ...rest }) => ({
+        ...rest,
+        hasOauthClientSecret: !!_secret,
+      }))
 
       logger.info(
         `[${requestId}] Listed ${servers.length} MCP servers for workspace ${workspaceId}`
@@ -105,34 +112,120 @@ export const POST = withRouteHandler(
 
         const serverId = body.url ? generateMcpServerId(workspaceId, body.url) : generateId()
 
+        const oauthClientSecretProvided = body.oauthClientSecret !== undefined
+        const oauthClientSecretEncrypted = body.oauthClientSecret
+          ? (await encryptSecret(body.oauthClientSecret)).encrypted
+          : null
+        const oauthClientIdProvided = body.oauthClientId !== undefined
+        const oauthClientId = body.oauthClientId || null
+
         const [existingServer] = await db
-          .select({ id: mcpServers.id, deletedAt: mcpServers.deletedAt })
+          .select({
+            id: mcpServers.id,
+            deletedAt: mcpServers.deletedAt,
+            url: mcpServers.url,
+            authType: mcpServers.authType,
+            oauthClientId: mcpServers.oauthClientId,
+            oauthClientSecret: mcpServers.oauthClientSecret,
+          })
           .from(mcpServers)
           .where(and(eq(mcpServers.id, serverId), eq(mcpServers.workspaceId, workspaceId)))
           .limit(1)
+
+        const urlChanged = existingServer ? existingServer.url !== body.url : true
+        const hasHeaders = body.headers && Object.keys(body.headers).length > 0
+
+        let resolvedAuthType: 'none' | 'headers' | 'oauth' = body.authType ?? 'headers'
+        if (!body.authType) {
+          if (existingServer && !urlChanged) {
+            // Preserve existing authType on edits that don't change the URL — re-probing
+            // can flip a working OAuth+DCR server to 'headers' on a transient 401/timeout.
+            resolvedAuthType = (existingServer.authType ?? 'headers') as
+              | 'none'
+              | 'headers'
+              | 'oauth'
+          } else if (body.url && !hasHeaders) {
+            try {
+              resolvedAuthType = await detectMcpAuthType(body.url)
+              logger.info(`[${requestId}] Probed ${body.url}: authType=${resolvedAuthType}`)
+            } catch (e) {
+              logger.warn(`[${requestId}] Probe failed for ${body.url}, defaulting to headers`, e)
+              resolvedAuthType = 'headers'
+            }
+          }
+        }
+
+        // User-supplied client credentials imply OAuth; pin authType regardless of probe.
+        if (body.oauthClientId) resolvedAuthType = 'oauth'
 
         if (existingServer) {
           logger.info(
             `[${requestId}] Server with ID ${serverId} already exists, updating instead of creating`
           )
 
-          await db
-            .update(mcpServers)
-            .set({
+          const clientIdChanged =
+            oauthClientIdProvided &&
+            (oauthClientId || null) !== (existingServer.oauthClientId ?? null)
+          let clientSecretChanged = false
+          if (oauthClientSecretProvided) {
+            if (!body.oauthClientSecret) {
+              clientSecretChanged = existingServer.oauthClientSecret != null
+            } else if (!existingServer.oauthClientSecret) {
+              clientSecretChanged = true
+            } else {
+              const currentPlaintext = (await decryptSecret(existingServer.oauthClientSecret))
+                .decrypted
+              clientSecretChanged = currentPlaintext !== body.oauthClientSecret
+            }
+          }
+          const oauthCredsChanged = clientIdChanged || clientSecretChanged
+
+          const isRevival = existingServer.deletedAt !== null
+          const shouldClearOauth = urlChanged || oauthCredsChanged || isRevival
+
+          await db.transaction(async (tx) => {
+            if (shouldClearOauth) {
+              await tx.delete(mcpServerOauth).where(eq(mcpServerOauth.mcpServerId, serverId))
+            }
+            const updateValues: Record<string, unknown> = {
               name: body.name,
               description: body.description,
               transport: body.transport,
               url: body.url,
+              authType: resolvedAuthType,
               headers: body.headers || {},
               timeout: body.timeout || 30000,
               retries: body.retries || 3,
               enabled: body.enabled !== false,
-              connectionStatus: 'connected',
-              lastConnected: new Date(),
               updatedAt: new Date(),
               deletedAt: null,
-            })
-            .where(eq(mcpServers.id, serverId))
+            }
+            if (resolvedAuthType === 'oauth') {
+              if (shouldClearOauth) {
+                updateValues.connectionStatus = 'disconnected'
+                updateValues.lastConnected = null
+              }
+            } else {
+              updateValues.connectionStatus = 'connected'
+              updateValues.lastConnected = new Date()
+            }
+            if (oauthClientIdProvided) updateValues.oauthClientId = oauthClientId
+            if (oauthClientSecretProvided) {
+              updateValues.oauthClientSecret = oauthClientSecretEncrypted
+            }
+            await tx.update(mcpServers).set(updateValues).where(eq(mcpServers.id, serverId))
+          })
+
+          if (shouldClearOauth) {
+            const reason = isRevival
+              ? 'server revival'
+              : urlChanged
+                ? 'URL change'
+                : 'OAuth credential change'
+            logger.info(
+              `[${requestId}] Cleared OAuth credentials for server ${serverId} due to ${reason}`
+            )
+          }
 
           await mcpService.clearCache(workspaceId)
 
@@ -140,7 +233,10 @@ export const POST = withRouteHandler(
             `[${requestId}] Successfully updated MCP server: ${body.name} (ID: ${serverId})`
           )
 
-          return createMcpSuccessResponse({ serverId, updated: true }, 200)
+          return createMcpSuccessResponse(
+            { serverId, updated: true, authType: resolvedAuthType },
+            200
+          )
         }
 
         await db
@@ -153,12 +249,15 @@ export const POST = withRouteHandler(
             description: body.description,
             transport: body.transport,
             url: body.url,
+            authType: resolvedAuthType,
+            oauthClientId,
+            oauthClientSecret: oauthClientSecretEncrypted,
             headers: body.headers || {},
             timeout: body.timeout || 30000,
             retries: body.retries || 3,
             enabled: body.enabled !== false,
-            connectionStatus: 'connected',
-            lastConnected: new Date(),
+            connectionStatus: resolvedAuthType === 'oauth' ? 'disconnected' : 'connected',
+            lastConnected: resolvedAuthType === 'oauth' ? null : new Date(),
             createdAt: new Date(),
             updatedAt: new Date(),
           })
@@ -178,9 +277,7 @@ export const POST = withRouteHandler(
             transport: body.transport,
             workspaceId,
           })
-        } catch (_e) {
-          // Silently fail
-        }
+        } catch (_e) {}
 
         const sourceParam = body.source as string | undefined
         const source =
@@ -217,7 +314,7 @@ export const POST = withRouteHandler(
           request,
         })
 
-        return createMcpSuccessResponse({ serverId }, 201)
+        return createMcpSuccessResponse({ serverId, authType: resolvedAuthType }, 201)
       } catch (error) {
         logger.error(`[${requestId}] Error registering MCP server:`, error)
         return createMcpErrorResponse(toError(error), 'Failed to register MCP server', 500)

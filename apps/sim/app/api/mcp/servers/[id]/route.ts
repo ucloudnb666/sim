@@ -1,11 +1,12 @@
 import { AuditAction, AuditResourceType, recordAudit } from '@sim/audit'
 import { db } from '@sim/db'
-import { mcpServers } from '@sim/db/schema'
+import { mcpServerOauth, mcpServers } from '@sim/db/schema'
 import { createLogger } from '@sim/logger'
 import { toError } from '@sim/utils/errors'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 import { updateMcpServerBodySchema } from '@/lib/api/contracts/mcp'
+import { decryptSecret, encryptSecret } from '@/lib/core/security/encryption'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import {
   McpDnsResolutionError,
@@ -52,8 +53,16 @@ export const PATCH = withRouteHandler(
           }
         )
 
-        // Remove workspaceId from body to prevent it from being updated
-        const { workspaceId: _, ...updateData } = body
+        const { workspaceId: _, oauthClientSecret, ...updateData } = body
+        const finalUpdateData: Record<string, unknown> = { ...updateData }
+        if (oauthClientSecret !== undefined) {
+          finalUpdateData.oauthClientSecret = oauthClientSecret
+            ? (await encryptSecret(oauthClientSecret)).encrypted
+            : null
+        }
+        if (updateData.oauthClientId !== undefined) {
+          finalUpdateData.oauthClientId = updateData.oauthClientId || null
+        }
 
         if (updateData.url) {
           try {
@@ -78,9 +87,13 @@ export const PATCH = withRouteHandler(
           }
         }
 
-        // Get the current server to check if URL is changing
         const [currentServer] = await db
-          .select({ url: mcpServers.url })
+          .select({
+            url: mcpServers.url,
+            authType: mcpServers.authType,
+            oauthClientId: mcpServers.oauthClientId,
+            oauthClientSecret: mcpServers.oauthClientSecret,
+          })
           .from(mcpServers)
           .where(
             and(
@@ -91,20 +104,60 @@ export const PATCH = withRouteHandler(
           )
           .limit(1)
 
-        const [updatedServer] = await db
-          .update(mcpServers)
-          .set({
-            ...updateData,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(mcpServers.id, serverId),
-              eq(mcpServers.workspaceId, workspaceId),
-              isNull(mcpServers.deletedAt)
+        // Adding OAuth client credentials to a non-OAuth server promotes it
+        // to OAuth so the connect-with-OAuth UI becomes reachable.
+        if (
+          body.oauthClientId &&
+          currentServer &&
+          currentServer.authType !== 'oauth' &&
+          finalUpdateData.authType === undefined
+        ) {
+          finalUpdateData.authType = 'oauth'
+        }
+
+        const urlChanged = body.url !== undefined && currentServer?.url !== body.url
+        const clientIdChanged =
+          body.oauthClientId !== undefined &&
+          (body.oauthClientId || null) !== (currentServer?.oauthClientId ?? null)
+        let clientSecretChanged = false
+        if (oauthClientSecret !== undefined) {
+          if (!oauthClientSecret) {
+            clientSecretChanged = currentServer?.oauthClientSecret != null
+          } else if (!currentServer?.oauthClientSecret) {
+            clientSecretChanged = true
+          } else {
+            const currentPlaintext = (await decryptSecret(currentServer.oauthClientSecret))
+              .decrypted
+            clientSecretChanged = currentPlaintext !== oauthClientSecret
+          }
+        }
+        const oauthCredsChanged = clientIdChanged || clientSecretChanged
+        const shouldClearOauth = urlChanged || oauthCredsChanged
+
+        const updatedServer = await db.transaction(async (tx) => {
+          const [updated] = await tx
+            .update(mcpServers)
+            .set({
+              ...finalUpdateData,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(mcpServers.id, serverId),
+                eq(mcpServers.workspaceId, workspaceId),
+                isNull(mcpServers.deletedAt)
+              )
             )
-          )
-          .returning()
+            .returning()
+
+          if (!updated) return null
+
+          if (shouldClearOauth) {
+            await tx.delete(mcpServerOauth).where(eq(mcpServerOauth.mcpServerId, serverId))
+          }
+
+          return updated
+        })
 
         if (!updatedServer) {
           return createMcpErrorResponse(
@@ -114,8 +167,15 @@ export const PATCH = withRouteHandler(
           )
         }
 
+        if (shouldClearOauth) {
+          logger.info(
+            `[${requestId}] Cleared OAuth credentials for server ${serverId} due to ${urlChanged ? 'URL' : 'OAuth credential'} change`
+          )
+        }
+
         const shouldClearCache =
-          (body.url !== undefined && currentServer?.url !== body.url) ||
+          urlChanged ||
+          oauthCredsChanged ||
           body.enabled !== undefined ||
           body.headers !== undefined ||
           body.timeout !== undefined ||
@@ -149,7 +209,10 @@ export const PATCH = withRouteHandler(
           request,
         })
 
-        return createMcpSuccessResponse({ server: updatedServer })
+        const { oauthClientSecret: _secret, ...rest } = updatedServer
+        return createMcpSuccessResponse({
+          server: { ...rest, hasOauthClientSecret: !!_secret },
+        })
       } catch (error) {
         logger.error(`[${requestId}] Error updating MCP server:`, error)
         return createMcpErrorResponse(toError(error), 'Failed to update MCP server', 500)
