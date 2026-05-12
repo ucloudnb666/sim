@@ -20,7 +20,11 @@ export async function revokeMcpOauthTokens(mcpServerId: string): Promise<void> {
     if (!row?.tokens) return
 
     const [server] = await db
-      .select({ url: mcpServers.url, oauthClientSecret: mcpServers.oauthClientSecret })
+      .select({
+        url: mcpServers.url,
+        oauthClientId: mcpServers.oauthClientId,
+        oauthClientSecret: mcpServers.oauthClientSecret,
+      })
       .from(mcpServers)
       .where(eq(mcpServers.id, mcpServerId))
       .limit(1)
@@ -34,9 +38,10 @@ export async function revokeMcpOauthTokens(mcpServerId: string): Promise<void> {
     if (!revocationEndpoint) return
 
     const clientInfo = row.clientInformation
-    if (!clientInfo?.client_id) return
+    const clientId = clientInfo?.client_id ?? server.oauthClientId ?? undefined
+    if (!clientId) return
 
-    let clientSecret = clientInfo.client_secret
+    let clientSecret = clientInfo?.client_secret
     if (!clientSecret && server.oauthClientSecret) {
       try {
         const { decrypted } = await decryptSecret(server.oauthClientSecret)
@@ -55,7 +60,7 @@ export async function revokeMcpOauthTokens(mcpServerId: string): Promise<void> {
     }
 
     for (const { token, hint } of tokensToRevoke) {
-      await postRevoke(revocationEndpoint, token, hint, clientInfo.client_id, clientSecret)
+      await postRevoke(revocationEndpoint, token, hint, clientId, clientSecret)
     }
   } catch (error) {
     logger.warn(`Token revocation failed for server ${mcpServerId}`, {
