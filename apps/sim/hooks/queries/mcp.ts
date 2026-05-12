@@ -156,8 +156,9 @@ export function useCreateMcpServer() {
           : `Created MCP server: ${config.name} (ID: ${serverId})`
       )
 
+      const { oauthClientSecret: _omitSecret, ...safeServerData } = serverData
       return {
-        ...serverData,
+        ...safeServerData,
         id: serverId,
         connectionStatus: authType === 'oauth' ? ('disconnected' as const) : ('connected' as const),
         serverId,

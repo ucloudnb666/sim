@@ -101,14 +101,9 @@ export async function getOrCreateOauthRow(params: {
   }
 }
 
-export async function loadOauthRow(params: { mcpServerId: string }): Promise<McpOauthRow | null> {
-  const [row] = await db
-    .select()
-    .from(mcpServerOauth)
-    .where(eq(mcpServerOauth.mcpServerId, params.mcpServerId))
-    .limit(1)
-  if (!row) return null
+type RawOauthRow = typeof mcpServerOauth.$inferSelect
 
+async function mapOauthRow(row: RawOauthRow): Promise<McpOauthRow> {
   return {
     id: row.id,
     mcpServerId: row.mcpServerId,
@@ -131,6 +126,16 @@ export async function loadOauthRow(params: { mcpServerId: string }): Promise<Mcp
     state: row.state,
     updatedAt: row.updatedAt,
   }
+}
+
+export async function loadOauthRow(params: { mcpServerId: string }): Promise<McpOauthRow | null> {
+  const [row] = await db
+    .select()
+    .from(mcpServerOauth)
+    .where(eq(mcpServerOauth.mcpServerId, params.mcpServerId))
+    .limit(1)
+  if (!row) return null
+  return mapOauthRow(row)
 }
 
 export async function setOauthRowUser(rowId: string, userId: string): Promise<void> {
@@ -152,28 +157,7 @@ export async function loadOauthRowByState(state: string): Promise<McpOauthRow | 
     )
     .limit(1)
   if (!row) return null
-  return {
-    id: row.id,
-    mcpServerId: row.mcpServerId,
-    userId: row.userId,
-    workspaceId: row.workspaceId,
-    clientInformation: row.clientInformation
-      ? await safeDecrypt(
-          row.id,
-          'clientInformation',
-          row.clientInformation,
-          (d) => JSON.parse(d) as OAuthClientInformationMixed
-        )
-      : null,
-    tokens: row.tokens
-      ? await safeDecrypt(row.id, 'tokens', row.tokens, (d) => JSON.parse(d) as OAuthTokens)
-      : null,
-    codeVerifier: row.codeVerifier
-      ? await safeDecrypt(row.id, 'codeVerifier', row.codeVerifier, (d) => d)
-      : null,
-    state: row.state,
-    updatedAt: row.updatedAt,
-  }
+  return mapOauthRow(row)
 }
 
 export async function saveClientInformation(
