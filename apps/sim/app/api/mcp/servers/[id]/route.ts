@@ -135,6 +135,12 @@ export const PATCH = withRouteHandler(
         const oauthCredsChanged = clientIdChanged || clientSecretChanged
         const shouldClearOauth = urlChanged || oauthCredsChanged
 
+        const resolvedAuthType = finalUpdateData.authType ?? currentServer?.authType
+        if (shouldClearOauth && resolvedAuthType === 'oauth') {
+          finalUpdateData.connectionStatus = 'disconnected'
+          finalUpdateData.lastConnected = null
+        }
+
         if (shouldClearOauth) {
           await revokeMcpOauthTokens(serverId)
         }

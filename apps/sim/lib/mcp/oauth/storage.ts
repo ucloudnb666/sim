@@ -249,11 +249,9 @@ const refreshLocks = new Map<string, Promise<unknown>>()
 export async function withMcpOauthRefreshLock<T>(rowId: string, fn: () => Promise<T>): Promise<T> {
   const prev = refreshLocks.get(rowId) ?? Promise.resolve()
   const next = prev.then(fn, fn)
-  refreshLocks.set(
-    rowId,
-    next.finally(() => {
-      if (refreshLocks.get(rowId) === next) refreshLocks.delete(rowId)
-    })
-  )
+  refreshLocks.set(rowId, next)
+  next.finally(() => {
+    if (refreshLocks.get(rowId) === next) refreshLocks.delete(rowId)
+  })
   return next
 }
