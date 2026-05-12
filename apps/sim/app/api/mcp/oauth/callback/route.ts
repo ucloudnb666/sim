@@ -60,19 +60,38 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
   const code = url.searchParams.get('code')
   const errorParam = url.searchParams.get('error')
 
+  const stateRowServerId = state
+    ? (await loadOauthRowByState(state).catch(() => null))?.mcpServerId
+    : undefined
+
   if (errorParam) {
     logger.warn(`MCP OAuth callback received error: ${errorParam}`)
-    return htmlClose(`Authorization failed: ${errorParam}`, false, 'provider_error')
+    return htmlClose(
+      `Authorization failed: ${errorParam}`,
+      false,
+      'provider_error',
+      stateRowServerId
+    )
   }
   if (!state || !code) {
-    return htmlClose('Missing state or code in callback URL.', false, 'missing_params')
+    return htmlClose(
+      'Missing state or code in callback URL.',
+      false,
+      'missing_params',
+      stateRowServerId
+    )
   }
 
   let serverId: string | undefined
   try {
     const session = await getSession()
     if (!session?.user?.id) {
-      return htmlClose('You must be signed in to complete authorization.', false, 'unauthenticated')
+      return htmlClose(
+        'You must be signed in to complete authorization.',
+        false,
+        'unauthenticated',
+        stateRowServerId
+      )
     }
 
     const row = await loadOauthRowByState(state)
