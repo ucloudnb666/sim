@@ -6,6 +6,9 @@ import {
   dbChainMockFns,
   hybridAuthMock,
   hybridAuthMockFns,
+  McpOauthRedirectRequiredMock,
+  mcpOauthMock,
+  mcpOauthMockFns,
   permissionsMock,
   permissionsMockFns,
   resetDbChainMock,
@@ -14,26 +17,8 @@ import {
 import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const {
-  mockMcpAuth,
-  mockGetOrCreateOauthRow,
-  mockLoadPreregisteredClient,
-  mockSetOauthRowUser,
-  mockAssertSafeOauthServerUrl,
-  MockMcpOauthRedirectRequired,
-  MockMcpOauthInsecureUrlError,
-} = vi.hoisted(() => ({
+const { mockMcpAuth } = vi.hoisted(() => ({
   mockMcpAuth: vi.fn(),
-  mockGetOrCreateOauthRow: vi.fn(),
-  mockLoadPreregisteredClient: vi.fn(),
-  mockSetOauthRowUser: vi.fn(),
-  mockAssertSafeOauthServerUrl: vi.fn(),
-  MockMcpOauthRedirectRequired: class MockMcpOauthRedirectRequired extends Error {
-    constructor(public readonly authorizationUrl: string) {
-      super('redirect required')
-    }
-  },
-  MockMcpOauthInsecureUrlError: class MockMcpOauthInsecureUrlError extends Error {},
 }))
 
 vi.mock('@sim/db', () => dbChainMock)
@@ -48,15 +33,7 @@ vi.mock('@modelcontextprotocol/sdk/client/auth.js', () => ({
 }))
 vi.mock('@/lib/auth/hybrid', () => hybridAuthMock)
 vi.mock('@/lib/workspaces/permissions/utils', () => permissionsMock)
-vi.mock('@/lib/mcp/oauth', () => ({
-  assertSafeOauthServerUrl: mockAssertSafeOauthServerUrl,
-  getOrCreateOauthRow: mockGetOrCreateOauthRow,
-  loadPreregisteredClient: mockLoadPreregisteredClient,
-  McpOauthInsecureUrlError: MockMcpOauthInsecureUrlError,
-  McpOauthRedirectRequired: MockMcpOauthRedirectRequired,
-  setOauthRowUser: mockSetOauthRowUser,
-  SimMcpOauthProvider: vi.fn().mockImplementation((value) => value),
-}))
+vi.mock('@/lib/mcp/oauth', () => mcpOauthMock)
 
 import { GET } from './route'
 
@@ -82,7 +59,7 @@ describe('MCP OAuth start route', () => {
         deletedAt: null,
       },
     ])
-    mockGetOrCreateOauthRow.mockResolvedValue({
+    mcpOauthMockFns.mockGetOrCreateOauthRow.mockResolvedValue({
       id: 'oauth-row-1',
       mcpServerId: 'server-1',
       userId: 'user-1',
@@ -93,8 +70,8 @@ describe('MCP OAuth start route', () => {
       state: null,
       updatedAt: new Date(),
     })
-    mockLoadPreregisteredClient.mockResolvedValue(undefined)
-    mockMcpAuth.mockRejectedValue(new MockMcpOauthRedirectRequired('https://mcp.exa.ai/authorize'))
+    mcpOauthMockFns.mockLoadPreregisteredClient.mockResolvedValue(undefined)
+    mockMcpAuth.mockRejectedValue(new McpOauthRedirectRequiredMock('https://mcp.exa.ai/authorize'))
   })
 
   it('requires workspace write permission via MCP auth middleware', async () => {
@@ -124,16 +101,16 @@ describe('MCP OAuth start route', () => {
       status: 'redirect',
       authorizationUrl: 'https://mcp.exa.ai/authorize',
     })
-    expect(mockGetOrCreateOauthRow).toHaveBeenCalledWith({
+    expect(mcpOauthMockFns.mockGetOrCreateOauthRow).toHaveBeenCalledWith({
       mcpServerId: 'server-1',
       userId: 'user-2',
       workspaceId: 'workspace-1',
     })
-    expect(mockSetOauthRowUser).toHaveBeenCalledWith('oauth-row-1', 'user-2')
+    expect(mcpOauthMockFns.mockSetOauthRowUser).toHaveBeenCalledWith('oauth-row-1', 'user-2')
   })
 
   it('rejects a second user starting OAuth while another authorization is active', async () => {
-    mockGetOrCreateOauthRow.mockResolvedValueOnce({
+    mcpOauthMockFns.mockGetOrCreateOauthRow.mockResolvedValueOnce({
       id: 'oauth-row-1',
       mcpServerId: 'server-1',
       userId: 'user-1',
