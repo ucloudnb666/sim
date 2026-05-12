@@ -70,6 +70,13 @@ export function useMcpOauthPopup({ workspaceId }: UseMcpOauthPopupProps) {
           next.delete(serverId)
           return next
         })
+      } else if (!data.ok) {
+        // Early callback failures (missing params, invalid state) post back
+        // without a serverId, so we can't target a specific row — clear all
+        // in-flight popups instead of leaving the UI stuck on "Connecting…".
+        for (const id of popupIntervalsRef.current.values()) window.clearInterval(id)
+        popupIntervalsRef.current.clear()
+        setConnectingServers((prev) => (prev.size === 0 ? prev : new Set()))
       }
       if (data.ok) {
         queryClient.invalidateQueries({ queryKey: mcpKeys.serversList(workspaceId) })

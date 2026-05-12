@@ -2,6 +2,7 @@ export type {
   McpOauthCallbackMessage,
   McpOauthCallbackReason,
 } from './callback-reasons'
+export { oauthCredsChanged } from './creds-diff'
 export { detectMcpAuthType } from './probe'
 export {
   loadPreregisteredClient,

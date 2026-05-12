@@ -6,7 +6,7 @@ import { toError } from '@sim/utils/errors'
 import { and, eq, isNull } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 import { updateMcpServerBodySchema } from '@/lib/api/contracts/mcp'
-import { decryptSecret, encryptSecret } from '@/lib/core/security/encryption'
+import { encryptSecret } from '@/lib/core/security/encryption'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import {
   McpDnsResolutionError,
@@ -16,7 +16,7 @@ import {
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
 import { getParsedBody, withMcpAuth } from '@/lib/mcp/middleware'
-import { revokeMcpOauthTokens } from '@/lib/mcp/oauth'
+import { oauthCredsChanged, revokeMcpOauthTokens } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
 import { createMcpErrorResponse, createMcpSuccessResponse } from '@/lib/mcp/utils'
 
@@ -125,27 +125,15 @@ export const PATCH = withRouteHandler(
         }
 
         const urlChanged = body.url !== undefined && currentServer?.url !== body.url
-        const clientIdChanged =
-          body.oauthClientId !== undefined &&
-          (body.oauthClientId || null) !== (currentServer?.oauthClientId ?? null)
-        let clientSecretChanged = false
-        if (oauthClientSecret !== undefined) {
-          if (!oauthClientSecret) {
-            clientSecretChanged = currentServer?.oauthClientSecret != null
-          } else if (!currentServer?.oauthClientSecret) {
-            clientSecretChanged = true
-          } else {
-            try {
-              const currentPlaintext = (await decryptSecret(currentServer.oauthClientSecret))
-                .decrypted
-              clientSecretChanged = currentPlaintext !== oauthClientSecret
-            } catch {
-              clientSecretChanged = true
-            }
-          }
-        }
-        const oauthCredsChanged = clientIdChanged || clientSecretChanged
-        const shouldClearOauth = urlChanged || oauthCredsChanged
+        const credsChanged = await oauthCredsChanged({
+          incomingClientId: body.oauthClientId,
+          incomingClientIdProvided: body.oauthClientId !== undefined,
+          incomingClientSecret: oauthClientSecret,
+          incomingClientSecretProvided: oauthClientSecret !== undefined,
+          currentClientId: currentServer?.oauthClientId,
+          currentEncryptedClientSecret: currentServer?.oauthClientSecret,
+        })
+        const shouldClearOauth = urlChanged || credsChanged
 
         const resolvedAuthType = finalUpdateData.authType ?? currentServer?.authType
         if (shouldClearOauth && resolvedAuthType === 'oauth') {

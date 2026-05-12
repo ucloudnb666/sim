@@ -270,7 +270,11 @@ export function useUpdateMcpServer() {
       )
 
       if (previousServers) {
-        const { oauthClientSecret: _omitSecret, ...safeUpdates } = updates
+        const { oauthClientSecret: _omitSecret, oauthClientId, ...rest } = updates
+        const safeUpdates: Partial<McpServer> = { ...rest }
+        if (oauthClientId !== undefined) {
+          safeUpdates.oauthClientId = oauthClientId || null
+        }
         queryClient.setQueryData<McpServer[]>(
           mcpKeys.serversList(workspaceId),
           previousServers.map((server) =>

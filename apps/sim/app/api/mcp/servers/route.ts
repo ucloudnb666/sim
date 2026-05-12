@@ -8,7 +8,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import type { NextRequest } from 'next/server'
 import { createMcpServerBodySchema, deleteMcpServerByQuerySchema } from '@/lib/api/contracts/mcp'
 import { validationErrorResponse } from '@/lib/api/server'
-import { decryptSecret, encryptSecret } from '@/lib/core/security/encryption'
+import { encryptSecret } from '@/lib/core/security/encryption'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import {
   McpDnsResolutionError,
@@ -18,7 +18,7 @@ import {
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
 import { getParsedBody, withMcpAuth } from '@/lib/mcp/middleware'
-import { detectMcpAuthType, revokeMcpOauthTokens } from '@/lib/mcp/oauth'
+import { detectMcpAuthType, oauthCredsChanged, revokeMcpOauthTokens } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
 import {
   createMcpErrorResponse,
@@ -163,29 +163,17 @@ export const POST = withRouteHandler(
             `[${requestId}] Server with ID ${serverId} already exists, updating instead of creating`
           )
 
-          const clientIdChanged =
-            oauthClientIdProvided &&
-            (oauthClientId || null) !== (existingServer.oauthClientId ?? null)
-          let clientSecretChanged = false
-          if (oauthClientSecretProvided) {
-            if (!body.oauthClientSecret) {
-              clientSecretChanged = existingServer.oauthClientSecret != null
-            } else if (!existingServer.oauthClientSecret) {
-              clientSecretChanged = true
-            } else {
-              try {
-                const currentPlaintext = (await decryptSecret(existingServer.oauthClientSecret))
-                  .decrypted
-                clientSecretChanged = currentPlaintext !== body.oauthClientSecret
-              } catch {
-                clientSecretChanged = true
-              }
-            }
-          }
-          const oauthCredsChanged = clientIdChanged || clientSecretChanged
+          const credsChanged = await oauthCredsChanged({
+            incomingClientId: oauthClientId,
+            incomingClientIdProvided: oauthClientIdProvided,
+            incomingClientSecret: body.oauthClientSecret,
+            incomingClientSecretProvided: oauthClientSecretProvided,
+            currentClientId: existingServer.oauthClientId,
+            currentEncryptedClientSecret: existingServer.oauthClientSecret,
+          })
 
           const isRevival = existingServer.deletedAt !== null
-          const shouldClearOauth = urlChanged || oauthCredsChanged || isRevival
+          const shouldClearOauth = urlChanged || credsChanged || isRevival
 
           if (shouldClearOauth) {
             await revokeMcpOauthTokens(serverId)
