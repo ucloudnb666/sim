@@ -173,9 +173,13 @@ export const POST = withRouteHandler(
             } else if (!existingServer.oauthClientSecret) {
               clientSecretChanged = true
             } else {
-              const currentPlaintext = (await decryptSecret(existingServer.oauthClientSecret))
-                .decrypted
-              clientSecretChanged = currentPlaintext !== body.oauthClientSecret
+              try {
+                const currentPlaintext = (await decryptSecret(existingServer.oauthClientSecret))
+                  .decrypted
+                clientSecretChanged = currentPlaintext !== body.oauthClientSecret
+              } catch {
+                clientSecretChanged = true
+              }
             }
           }
           const oauthCredsChanged = clientIdChanged || clientSecretChanged

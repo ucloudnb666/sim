@@ -135,9 +135,13 @@ export const PATCH = withRouteHandler(
           } else if (!currentServer?.oauthClientSecret) {
             clientSecretChanged = true
           } else {
-            const currentPlaintext = (await decryptSecret(currentServer.oauthClientSecret))
-              .decrypted
-            clientSecretChanged = currentPlaintext !== oauthClientSecret
+            try {
+              const currentPlaintext = (await decryptSecret(currentServer.oauthClientSecret))
+                .decrypted
+              clientSecretChanged = currentPlaintext !== oauthClientSecret
+            } catch {
+              clientSecretChanged = true
+            }
           }
         }
         const oauthCredsChanged = clientIdChanged || clientSecretChanged
