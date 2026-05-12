@@ -762,7 +762,7 @@ export function McpServerFormModal({
                       onChange={(value) => {
                         if (testResult) clearTestResult()
                         if (submitError) setSubmitError(null)
-                        setOauthClientSecretTouched(true)
+                        setOauthClientSecretTouched(value.length > 0)
                         setFormData((prev) => ({ ...prev, oauthClientSecret: value }))
                       }}
                       className='h-9'
