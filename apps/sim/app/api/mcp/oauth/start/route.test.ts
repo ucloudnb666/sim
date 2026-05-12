@@ -19,17 +19,21 @@ const {
   mockGetOrCreateOauthRow,
   mockLoadPreregisteredClient,
   mockSetOauthRowUser,
+  mockAssertSafeOauthServerUrl,
   MockMcpOauthRedirectRequired,
+  MockMcpOauthInsecureUrlError,
 } = vi.hoisted(() => ({
   mockMcpAuth: vi.fn(),
   mockGetOrCreateOauthRow: vi.fn(),
   mockLoadPreregisteredClient: vi.fn(),
   mockSetOauthRowUser: vi.fn(),
+  mockAssertSafeOauthServerUrl: vi.fn(),
   MockMcpOauthRedirectRequired: class MockMcpOauthRedirectRequired extends Error {
     constructor(public readonly authorizationUrl: string) {
       super('redirect required')
     }
   },
+  MockMcpOauthInsecureUrlError: class MockMcpOauthInsecureUrlError extends Error {},
 }))
 
 vi.mock('@sim/db', () => dbChainMock)
@@ -45,8 +49,10 @@ vi.mock('@modelcontextprotocol/sdk/client/auth.js', () => ({
 vi.mock('@/lib/auth/hybrid', () => hybridAuthMock)
 vi.mock('@/lib/workspaces/permissions/utils', () => permissionsMock)
 vi.mock('@/lib/mcp/oauth', () => ({
+  assertSafeOauthServerUrl: mockAssertSafeOauthServerUrl,
   getOrCreateOauthRow: mockGetOrCreateOauthRow,
   loadPreregisteredClient: mockLoadPreregisteredClient,
+  McpOauthInsecureUrlError: MockMcpOauthInsecureUrlError,
   McpOauthRedirectRequired: MockMcpOauthRedirectRequired,
   setOauthRowUser: mockSetOauthRowUser,
   SimMcpOauthProvider: vi.fn().mockImplementation((value) => value),
