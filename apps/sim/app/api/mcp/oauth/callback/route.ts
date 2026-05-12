@@ -14,6 +14,7 @@ import {
   clearVerifier,
   loadOauthRowByState,
   loadPreregisteredClient,
+  type McpOauthCallbackReason,
   SimMcpOauthProvider,
 } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
@@ -31,18 +32,6 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-type CallbackReason =
-  | 'authorized'
-  | 'provider_error'
-  | 'missing_params'
-  | 'unauthenticated'
-  | 'invalid_state'
-  | 'user_mismatch'
-  | 'server_gone'
-  | 'insecure_url'
-  | 'token_exchange_failed'
-  | 'unknown'
-
 function jsonLiteral(value: string | undefined): string {
   if (value === undefined) return 'undefined'
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
@@ -51,7 +40,7 @@ function jsonLiteral(value: string | undefined): string {
 function htmlClose(
   message: string,
   ok: boolean,
-  reason: CallbackReason,
+  reason: McpOauthCallbackReason,
   serverId?: string
 ): NextResponse {
   const safeMessage = escapeHtml(message)

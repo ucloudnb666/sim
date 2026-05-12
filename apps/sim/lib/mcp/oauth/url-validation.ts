@@ -1,8 +1,4 @@
-/**
- * MCP OAuth requires HTTPS for non-loopback hosts (MCP spec §2.1, RFC 8252 §7.3).
- * Throws if the URL is not safe to drive an OAuth flow against.
- */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
+import { isLoopbackHostname } from '@/lib/core/utils/urls'
 
 export class McpOauthInsecureUrlError extends Error {
   constructor(url: string) {
@@ -11,6 +7,10 @@ export class McpOauthInsecureUrlError extends Error {
   }
 }
 
+/**
+ * MCP spec §2.1 and RFC 8252 §7.3: OAuth flows must run over https, with
+ * http allowed only for loopback addresses during local development.
+ */
 export function assertSafeOauthServerUrl(rawUrl: string | null | undefined): URL {
   if (!rawUrl) throw new McpOauthInsecureUrlError(String(rawUrl))
   let parsed: URL
@@ -20,6 +20,6 @@ export function assertSafeOauthServerUrl(rawUrl: string | null | undefined): URL
     throw new McpOauthInsecureUrlError(rawUrl)
   }
   if (parsed.protocol === 'https:') return parsed
-  if (parsed.protocol === 'http:' && LOOPBACK_HOSTS.has(parsed.hostname)) return parsed
+  if (parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname)) return parsed
   throw new McpOauthInsecureUrlError(rawUrl)
 }

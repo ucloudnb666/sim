@@ -42,10 +42,8 @@ async function encryptClientInformation(info: OAuthClientInformationMixed): Prom
 }
 
 /**
- * Decrypt a stored ciphertext column, returning `null` if decryption fails
- * (e.g. encryption key rotated, ciphertext corrupted). On failure the column
- * is cleared so the next call triggers a normal reauth flow instead of bubbling
- * an opaque 500 to the user.
+ * Returns `null` and clears the column when decryption fails (e.g. key rotation)
+ * so the next call triggers a fresh OAuth flow instead of a 500.
  */
 async function safeDecrypt<T>(
   rowId: string,

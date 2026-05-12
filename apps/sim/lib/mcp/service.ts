@@ -166,10 +166,6 @@ class McpService {
       .filter((config) => isMcpDomainAllowed(config.url))
   }
 
-  /**
-   * For `authType === 'oauth'` configs, a workspace-scoped `SimMcpOauthProvider`
-   * is built and attached so the SDK can drive the standard MCP OAuth flow.
-   */
   private async createClient(config: McpServerConfig, userId?: string): Promise<McpClient> {
     const securityPolicy = {
       requireConsent: true,

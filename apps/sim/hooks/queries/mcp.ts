@@ -20,6 +20,7 @@ import {
   testMcpServerConnectionContract,
   updateMcpServerContract,
 } from '@/lib/api/contracts/mcp'
+import { isLoopbackHostname } from '@/lib/core/utils/urls'
 import { sanitizeForHttp, sanitizeHeaders } from '@/lib/mcp/shared'
 import type { McpServerStatusConfig, McpTool, McpTransport, StoredMcpTool } from '@/lib/mcp/types'
 import { workflowMcpServerKeys } from '@/hooks/queries/workflow-mcp-servers'
@@ -191,10 +192,7 @@ export function useStartMcpOauth() {
 
         const parsedUrl = new URL(result.authorizationUrl)
         const isLoopbackHttp =
-          parsedUrl.protocol === 'http:' &&
-          (parsedUrl.hostname === 'localhost' ||
-            parsedUrl.hostname === '127.0.0.1' ||
-            parsedUrl.hostname === '[::1]')
+          parsedUrl.protocol === 'http:' && isLoopbackHostname(parsedUrl.hostname)
         if (parsedUrl.protocol !== 'https:' && !isLoopbackHttp) {
           throw new Error('Authorization URL must use HTTPS')
         }

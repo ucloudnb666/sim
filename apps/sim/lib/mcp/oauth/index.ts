@@ -1,3 +1,7 @@
+export type {
+  McpOauthCallbackMessage,
+  McpOauthCallbackReason,
+} from './callback-reasons'
 export { detectMcpAuthType } from './probe'
 export {
   loadPreregisteredClient,

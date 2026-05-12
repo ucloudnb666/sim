@@ -1,6 +1,6 @@
 import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js'
 import { db } from '@sim/db'
-import { mcpServerOauth, mcpServers } from '@sim/db/schema'
+import { mcpServers } from '@sim/db/schema'
 import { createLogger } from '@sim/logger'
 import { toError } from '@sim/utils/errors'
 import { eq } from 'drizzle-orm'
@@ -95,20 +95,5 @@ async function postRevoke(
     }
   } finally {
     clearTimeout(timer)
-  }
-}
-
-/**
- * Inline revocation + row deletion. Used by routes that clear OAuth state before
- * also deleting/clearing the parent mcpServers row.
- */
-export async function revokeAndClearMcpOauth(mcpServerId: string): Promise<void> {
-  await revokeMcpOauthTokens(mcpServerId)
-  try {
-    await db.delete(mcpServerOauth).where(eq(mcpServerOauth.mcpServerId, mcpServerId))
-  } catch (error) {
-    logger.warn(`Failed to clear mcpServerOauth row for server ${mcpServerId}`, {
-      error: toError(error).message,
-    })
   }
 }

@@ -5,11 +5,12 @@ import { createLogger } from '@sim/logger'
 import { toError } from '@sim/utils/errors'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from '@/components/emcn'
+import type { McpOauthCallbackMessage, McpOauthCallbackReason } from '@/lib/mcp/oauth'
 import { mcpKeys, useStartMcpOauth } from '@/hooks/queries/mcp'
 
 const logger = createLogger('useMcpOauthPopup')
 
-function reasonToMessage(reason: string | undefined): string {
+function reasonToMessage(reason: McpOauthCallbackReason | undefined): string {
   switch (reason) {
     case 'provider_error':
       return 'The authorization server returned an error. Please try again.'
@@ -54,12 +55,7 @@ export function useMcpOauthPopup({ workspaceId }: UseMcpOauthPopupProps) {
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return
-      const data = event.data as {
-        type?: string
-        ok?: boolean
-        serverId?: string
-        reason?: string
-      } | null
+      const data = event.data as Partial<McpOauthCallbackMessage> | null
       if (data?.type !== 'mcp-oauth') return
       if (data.serverId) {
         const serverId = data.serverId

@@ -1,5 +1,6 @@
 import { extractWWWAuthenticateParams } from '@modelcontextprotocol/sdk/client/auth.js'
 import { createLogger } from '@sim/logger'
+import { isLoopbackHostname } from '@/lib/core/utils/urls'
 import type { McpAuthType } from '@/lib/mcp/types'
 
 const logger = createLogger('McpOauthProbe')
@@ -13,16 +14,8 @@ export async function detectMcpAuthType(url: string): Promise<McpAuthType> {
   } catch {
     return 'headers'
   }
-  if (
-    parsed.protocol !== 'https:' &&
-    !(
-      parsed.protocol === 'http:' &&
-      (parsed.hostname === 'localhost' ||
-        parsed.hostname === '127.0.0.1' ||
-        parsed.hostname === '[::1]' ||
-        parsed.hostname === '::1')
-    )
-  ) {
+  const isLoopbackHttp = parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname)
+  if (parsed.protocol !== 'https:' && !isLoopbackHttp) {
     return 'headers'
   }
   const controller = new AbortController()
