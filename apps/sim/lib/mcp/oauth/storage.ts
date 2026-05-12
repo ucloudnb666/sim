@@ -250,8 +250,9 @@ export async function withMcpOauthRefreshLock<T>(rowId: string, fn: () => Promis
   const prev = refreshLocks.get(rowId) ?? Promise.resolve()
   const next = prev.then(fn, fn)
   refreshLocks.set(rowId, next)
-  next.finally(() => {
+  const cleanup = () => {
     if (refreshLocks.get(rowId) === next) refreshLocks.delete(rowId)
-  })
+  }
+  next.then(cleanup, cleanup)
   return next
 }

@@ -90,7 +90,7 @@ async function postRevoke(
       body: params.toString(),
       signal: controller.signal,
     })
-    if (!res.ok && res.status !== 200) {
+    if (!res.ok) {
       logger.info(`Revocation returned ${res.status} for ${hint}; treating as best-effort`)
     }
   } finally {
