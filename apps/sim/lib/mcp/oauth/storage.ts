@@ -232,7 +232,10 @@ const refreshLocks = new Map<string, Promise<unknown>>()
 
 export async function withMcpOauthRefreshLock<T>(rowId: string, fn: () => Promise<T>): Promise<T> {
   const prev = refreshLocks.get(rowId) ?? Promise.resolve()
-  const next = prev.then(fn, fn)
+  // Wait for the predecessor to settle (success or failure), discard its
+  // value/error, then run fn. Each caller awaits its own fn's outcome — errors
+  // do not propagate across callers in the chain.
+  const next = prev.catch(() => undefined).then(() => fn())
   refreshLocks.set(rowId, next)
   const cleanup = () => {
     if (refreshLocks.get(rowId) === next) refreshLocks.delete(rowId)

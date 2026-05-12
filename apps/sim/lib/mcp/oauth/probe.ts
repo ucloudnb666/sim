@@ -42,6 +42,11 @@ export async function detectMcpAuthType(url: string): Promise<McpAuthType> {
       signal: controller.signal,
     })
 
+    const sessionId = res.headers.get('mcp-session-id')
+    if (sessionId) {
+      void closeMcpSession(url, sessionId)
+    }
+
     if (res.status === 401) {
       const params = extractWWWAuthenticateParams(res)
       if (params.resourceMetadataUrl || params.scope || params.error) {
@@ -57,5 +62,27 @@ export async function detectMcpAuthType(url: string): Promise<McpAuthType> {
     return 'headers'
   } finally {
     clearTimeout(timer)
+  }
+}
+
+/**
+ * Best-effort DELETE to release the streamable-HTTP session the probe just
+ * allocated. Failures are ignored — the session will expire on the server side.
+ */
+async function closeMcpSession(url: string, sessionId: string): Promise<void> {
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
+    try {
+      await fetch(url, {
+        method: 'DELETE',
+        headers: { 'Mcp-Session-Id': sessionId },
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    // Ignore — best-effort cleanup
   }
 }
