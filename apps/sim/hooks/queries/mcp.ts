@@ -269,11 +269,12 @@ export function useUpdateMcpServer() {
       )
 
       if (previousServers) {
+        const { oauthClientSecret: _omitSecret, ...safeUpdates } = updates
         queryClient.setQueryData<McpServer[]>(
           mcpKeys.serversList(workspaceId),
           previousServers.map((server) =>
             server.id === serverId
-              ? { ...server, ...updates, updatedAt: new Date().toISOString() }
+              ? { ...server, ...safeUpdates, updatedAt: new Date().toISOString() }
               : server
           )
         )
