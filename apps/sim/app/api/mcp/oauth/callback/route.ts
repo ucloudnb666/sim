@@ -60,12 +60,12 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
   const code = url.searchParams.get('code')
   const errorParam = url.searchParams.get('error')
 
-  const stateRowServerId = state
-    ? (await loadOauthRowByState(state).catch(() => null))?.mcpServerId
-    : undefined
+  const initialRow = state ? await loadOauthRowByState(state).catch(() => null) : null
+  const stateRowServerId = initialRow?.mcpServerId
 
   if (errorParam) {
     logger.warn(`MCP OAuth callback received error: ${errorParam}`)
+    if (initialRow) await clearState(initialRow.id).catch(() => {})
     return htmlClose(
       `Authorization failed: ${errorParam}`,
       false,
@@ -94,7 +94,7 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
       )
     }
 
-    const row = await loadOauthRowByState(state)
+    const row = initialRow
     if (!row) {
       return htmlClose('Invalid or expired authorization state.', false, 'invalid_state')
     }
