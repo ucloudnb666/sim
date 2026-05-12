@@ -7,6 +7,24 @@ const logger = createLogger('McpOauthProbe')
 const PROBE_TIMEOUT_MS = 5000
 
 export async function detectMcpAuthType(url: string): Promise<McpAuthType> {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'headers'
+  }
+  if (
+    parsed.protocol !== 'https:' &&
+    !(
+      parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' ||
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === '[::1]' ||
+        parsed.hostname === '::1')
+    )
+  ) {
+    return 'headers'
+  }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
 

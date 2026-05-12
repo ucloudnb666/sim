@@ -11,8 +11,10 @@ import { parseRequest } from '@/lib/api/server'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import { withMcpAuth } from '@/lib/mcp/middleware'
 import {
+  assertSafeOauthServerUrl,
   getOrCreateOauthRow,
   loadPreregisteredClient,
+  McpOauthInsecureUrlError,
   McpOauthRedirectRequired,
   SimMcpOauthProvider,
   setOauthRowUser,
@@ -55,6 +57,18 @@ export const GET = withRouteHandler(
       }
       if (!server.url) {
         return createMcpErrorResponse(new Error('Server has no URL'), 'Missing server URL', 400)
+      }
+      try {
+        assertSafeOauthServerUrl(server.url)
+      } catch (e) {
+        if (e instanceof McpOauthInsecureUrlError) {
+          return createMcpErrorResponse(
+            e,
+            'MCP OAuth requires https (or http://localhost for development)',
+            400
+          )
+        }
+        throw e
       }
 
       const row = await getOrCreateOauthRow({

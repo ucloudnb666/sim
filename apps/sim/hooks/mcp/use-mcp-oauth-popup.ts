@@ -9,6 +9,29 @@ import { mcpKeys, useStartMcpOauth } from '@/hooks/queries/mcp'
 
 const logger = createLogger('useMcpOauthPopup')
 
+function reasonToMessage(reason: string | undefined): string {
+  switch (reason) {
+    case 'provider_error':
+      return 'The authorization server returned an error. Please try again.'
+    case 'invalid_state':
+      return 'Authorization expired. Please try again.'
+    case 'user_mismatch':
+      return 'You must complete authorization as the same user who started it.'
+    case 'server_gone':
+      return 'This MCP server no longer exists.'
+    case 'insecure_url':
+      return 'MCP OAuth requires https.'
+    case 'token_exchange_failed':
+      return 'Failed to complete token exchange with the authorization server.'
+    case 'unauthenticated':
+      return 'Please sign in and try again.'
+    case 'missing_params':
+      return 'The authorization callback was missing required parameters.'
+    default:
+      return 'Authorization failed. Please try again.'
+  }
+}
+
 interface UseMcpOauthPopupProps {
   workspaceId: string
 }
@@ -31,7 +54,12 @@ export function useMcpOauthPopup({ workspaceId }: UseMcpOauthPopupProps) {
   useEffect(() => {
     function onMessage(event: MessageEvent) {
       if (event.origin !== window.location.origin) return
-      const data = event.data as { type?: string; ok?: boolean; serverId?: string } | null
+      const data = event.data as {
+        type?: string
+        ok?: boolean
+        serverId?: string
+        reason?: string
+      } | null
       if (data?.type !== 'mcp-oauth') return
       if (data.serverId) {
         const serverId = data.serverId
@@ -53,7 +81,7 @@ export function useMcpOauthPopup({ workspaceId }: UseMcpOauthPopupProps) {
         queryClient.invalidateQueries({ queryKey: mcpKeys.storedToolsList(workspaceId) })
         toast.success('Server authorized')
       } else {
-        toast.error('Authorization failed. Please try again.')
+        toast.error(reasonToMessage(data.reason))
       }
     }
     window.addEventListener('message', onMessage)

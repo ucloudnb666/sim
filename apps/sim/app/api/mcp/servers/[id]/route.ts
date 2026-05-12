@@ -16,6 +16,7 @@ import {
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
 import { getParsedBody, withMcpAuth } from '@/lib/mcp/middleware'
+import { revokeMcpOauthTokens } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
 import { createMcpErrorResponse, createMcpSuccessResponse } from '@/lib/mcp/utils'
 
@@ -133,6 +134,10 @@ export const PATCH = withRouteHandler(
         }
         const oauthCredsChanged = clientIdChanged || clientSecretChanged
         const shouldClearOauth = urlChanged || oauthCredsChanged
+
+        if (shouldClearOauth) {
+          await revokeMcpOauthTokens(serverId)
+        }
 
         const updatedServer = await db.transaction(async (tx) => {
           const [updated] = await tx

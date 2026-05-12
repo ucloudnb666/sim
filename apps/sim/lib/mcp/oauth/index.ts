@@ -5,6 +5,7 @@ export {
   type PreregisteredClient,
   SimMcpOauthProvider,
 } from './provider'
+export { revokeMcpOauthTokens } from './revoke'
 export {
   clearClient,
   clearState,
@@ -19,4 +20,6 @@ export {
   saveState,
   saveTokens,
   setOauthRowUser,
+  withMcpOauthRefreshLock,
 } from './storage'
+export { assertSafeOauthServerUrl, McpOauthInsecureUrlError } from './url-validation'

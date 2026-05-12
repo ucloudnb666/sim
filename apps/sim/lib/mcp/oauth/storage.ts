@@ -5,9 +5,13 @@ import type {
 } from '@modelcontextprotocol/sdk/shared/auth.js'
 import { db } from '@sim/db'
 import { mcpServerOauth } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
+import { toError } from '@sim/utils/errors'
 import { generateId } from '@sim/utils/id'
 import { and, eq, gt } from 'drizzle-orm'
 import { decryptSecret, encryptSecret } from '@/lib/core/security/encryption'
+
+const logger = createLogger('McpOauthStorage')
 
 function hashState(state: string): string {
   return createHash('sha256').update(state).digest('hex')
@@ -32,19 +36,36 @@ async function encryptTokens(tokens: OAuthTokens): Promise<string> {
   return encrypted
 }
 
-async function decryptTokens(encrypted: string): Promise<OAuthTokens> {
-  const { decrypted } = await decryptSecret(encrypted)
-  return JSON.parse(decrypted) as OAuthTokens
-}
-
 async function encryptClientInformation(info: OAuthClientInformationMixed): Promise<string> {
   const { encrypted } = await encryptSecret(JSON.stringify(info))
   return encrypted
 }
 
-async function decryptClientInformation(encrypted: string): Promise<OAuthClientInformationMixed> {
-  const { decrypted } = await decryptSecret(encrypted)
-  return JSON.parse(decrypted) as OAuthClientInformationMixed
+/**
+ * Decrypt a stored ciphertext column, returning `null` if decryption fails
+ * (e.g. encryption key rotated, ciphertext corrupted). On failure the column
+ * is cleared so the next call triggers a normal reauth flow instead of bubbling
+ * an opaque 500 to the user.
+ */
+async function safeDecrypt<T>(
+  rowId: string,
+  column: 'tokens' | 'clientInformation' | 'codeVerifier',
+  encrypted: string,
+  decode: (decrypted: string) => T
+): Promise<T | null> {
+  try {
+    const { decrypted } = await decryptSecret(encrypted)
+    return decode(decrypted)
+  } catch (error) {
+    logger.warn(`Failed to decrypt ${column} for OAuth row ${rowId}; clearing column`, {
+      error: toError(error).message,
+    })
+    await db
+      .update(mcpServerOauth)
+      .set({ [column]: null, updatedAt: new Date() })
+      .where(eq(mcpServerOauth.id, rowId))
+    return null
+  }
 }
 
 export async function getOrCreateOauthRow(params: {
@@ -96,10 +117,19 @@ export async function loadOauthRow(params: { mcpServerId: string }): Promise<Mcp
     userId: row.userId,
     workspaceId: row.workspaceId,
     clientInformation: row.clientInformation
-      ? await decryptClientInformation(row.clientInformation)
+      ? await safeDecrypt(
+          row.id,
+          'clientInformation',
+          row.clientInformation,
+          (d) => JSON.parse(d) as OAuthClientInformationMixed
+        )
       : null,
-    tokens: row.tokens ? await decryptTokens(row.tokens) : null,
-    codeVerifier: row.codeVerifier ? (await decryptSecret(row.codeVerifier)).decrypted : null,
+    tokens: row.tokens
+      ? await safeDecrypt(row.id, 'tokens', row.tokens, (d) => JSON.parse(d) as OAuthTokens)
+      : null,
+    codeVerifier: row.codeVerifier
+      ? await safeDecrypt(row.id, 'codeVerifier', row.codeVerifier, (d) => d)
+      : null,
     state: row.state,
     updatedAt: row.updatedAt,
   }
@@ -130,10 +160,19 @@ export async function loadOauthRowByState(state: string): Promise<McpOauthRow | 
     userId: row.userId,
     workspaceId: row.workspaceId,
     clientInformation: row.clientInformation
-      ? await decryptClientInformation(row.clientInformation)
+      ? await safeDecrypt(
+          row.id,
+          'clientInformation',
+          row.clientInformation,
+          (d) => JSON.parse(d) as OAuthClientInformationMixed
+        )
       : null,
-    tokens: row.tokens ? await decryptTokens(row.tokens) : null,
-    codeVerifier: row.codeVerifier ? (await decryptSecret(row.codeVerifier)).decrypted : null,
+    tokens: row.tokens
+      ? await safeDecrypt(row.id, 'tokens', row.tokens, (d) => JSON.parse(d) as OAuthTokens)
+      : null,
+    codeVerifier: row.codeVerifier
+      ? await safeDecrypt(row.id, 'codeVerifier', row.codeVerifier, (d) => d)
+      : null,
     state: row.state,
     updatedAt: row.updatedAt,
   }
@@ -199,4 +238,24 @@ export async function clearState(rowId: string): Promise<void> {
     .update(mcpServerOauth)
     .set({ state: null, updatedAt: new Date() })
     .where(eq(mcpServerOauth.id, rowId))
+}
+
+/**
+ * Per-process serialization for an OAuth row. Refresh tokens rotate (RFC 6749 §6,
+ * MCP §2.3.3), so two concurrent refreshes against the same row would race and one
+ * would receive `invalid_grant`, wiping the credentials. We serialize SDK calls
+ * that may trigger a refresh on a per-row basis.
+ */
+const refreshLocks = new Map<string, Promise<unknown>>()
+
+export async function withMcpOauthRefreshLock<T>(rowId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = refreshLocks.get(rowId) ?? Promise.resolve()
+  const next = prev.then(fn, fn)
+  refreshLocks.set(
+    rowId,
+    next.finally(() => {
+      if (refreshLocks.get(rowId) === next) refreshLocks.delete(rowId)
+    })
+  )
+  return next
 }

@@ -1,0 +1,114 @@
+import { discoverOAuthServerInfo } from '@modelcontextprotocol/sdk/client/auth.js'
+import { db } from '@sim/db'
+import { mcpServerOauth, mcpServers } from '@sim/db/schema'
+import { createLogger } from '@sim/logger'
+import { toError } from '@sim/utils/errors'
+import { eq } from 'drizzle-orm'
+import { decryptSecret } from '@/lib/core/security/encryption'
+import { loadOauthRow } from '@/lib/mcp/oauth/storage'
+
+const logger = createLogger('McpOauthRevoke')
+const REVOKE_TIMEOUT_MS = 5000
+
+/**
+ * Best-effort RFC 7009 revocation of tokens at the authorization server.
+ * Never throws — revocation is advisory and must not block disconnect/delete flows.
+ */
+export async function revokeMcpOauthTokens(mcpServerId: string): Promise<void> {
+  try {
+    const row = await loadOauthRow({ mcpServerId })
+    if (!row?.tokens) return
+
+    const [server] = await db
+      .select({ url: mcpServers.url, oauthClientSecret: mcpServers.oauthClientSecret })
+      .from(mcpServers)
+      .where(eq(mcpServers.id, mcpServerId))
+      .limit(1)
+    if (!server?.url) return
+
+    const info = await discoverOAuthServerInfo(server.url).catch(() => undefined)
+    const metadata = info?.authorizationServerMetadata as
+      | (Record<string, unknown> & { revocation_endpoint?: string })
+      | undefined
+    const revocationEndpoint = metadata?.revocation_endpoint
+    if (!revocationEndpoint) return
+
+    const clientInfo = row.clientInformation
+    if (!clientInfo?.client_id) return
+
+    let clientSecret = clientInfo.client_secret
+    if (!clientSecret && server.oauthClientSecret) {
+      try {
+        const { decrypted } = await decryptSecret(server.oauthClientSecret)
+        clientSecret = decrypted
+      } catch {
+        clientSecret = undefined
+      }
+    }
+
+    const tokensToRevoke: Array<{ token: string; hint: 'refresh_token' | 'access_token' }> = []
+    if (row.tokens.refresh_token) {
+      tokensToRevoke.push({ token: row.tokens.refresh_token, hint: 'refresh_token' })
+    }
+    if (row.tokens.access_token) {
+      tokensToRevoke.push({ token: row.tokens.access_token, hint: 'access_token' })
+    }
+
+    for (const { token, hint } of tokensToRevoke) {
+      await postRevoke(revocationEndpoint, token, hint, clientInfo.client_id, clientSecret)
+    }
+  } catch (error) {
+    logger.warn(`Token revocation failed for server ${mcpServerId}`, {
+      error: toError(error).message,
+    })
+  }
+}
+
+async function postRevoke(
+  endpoint: string,
+  token: string,
+  hint: 'refresh_token' | 'access_token',
+  clientId: string,
+  clientSecret: string | undefined
+): Promise<void> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), REVOKE_TIMEOUT_MS)
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    }
+    const params = new URLSearchParams({ token, token_type_hint: hint })
+    if (clientSecret) {
+      headers.Authorization = `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`
+    } else {
+      params.set('client_id', clientId)
+    }
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers,
+      body: params.toString(),
+      signal: controller.signal,
+    })
+    if (!res.ok && res.status !== 200) {
+      logger.info(`Revocation returned ${res.status} for ${hint}; treating as best-effort`)
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Inline revocation + row deletion. Used by routes that clear OAuth state before
+ * also deleting/clearing the parent mcpServers row.
+ */
+export async function revokeAndClearMcpOauth(mcpServerId: string): Promise<void> {
+  await revokeMcpOauthTokens(mcpServerId)
+  try {
+    await db.delete(mcpServerOauth).where(eq(mcpServerOauth.mcpServerId, mcpServerId))
+  } catch (error) {
+    logger.warn(`Failed to clear mcpServerOauth row for server ${mcpServerId}`, {
+      error: toError(error).message,
+    })
+  }
+}

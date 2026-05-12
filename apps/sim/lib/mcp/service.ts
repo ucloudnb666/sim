@@ -18,7 +18,12 @@ import {
   validateMcpDomain,
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
-import { getOrCreateOauthRow, loadPreregisteredClient, SimMcpOauthProvider } from '@/lib/mcp/oauth'
+import {
+  getOrCreateOauthRow,
+  loadPreregisteredClient,
+  SimMcpOauthProvider,
+  withMcpOauthRefreshLock,
+} from '@/lib/mcp/oauth'
 import { resolveMcpConfigEnvVars } from '@/lib/mcp/resolve-config'
 import {
   createMcpCacheAdapter,
@@ -174,6 +179,7 @@ class McpService {
     }
 
     let authProvider: McpClientOptions['authProvider']
+    let rowId: string | undefined
     if (config.authType === 'oauth') {
       if (!userId || !config.workspaceId) {
         throw new Error('OAuth MCP server requires both userId and workspaceId')
@@ -186,13 +192,18 @@ class McpService {
       if (!row.tokens) {
         throw new McpOauthAuthorizationRequiredError(config.id, config.name)
       }
+      rowId = row.id
       const preregistered = await loadPreregisteredClient(config.id)
       authProvider = new SimMcpOauthProvider({ row, preregistered })
     }
 
-    const client = new McpClient({ config, securityPolicy, authProvider })
-    await client.connect()
-    return client
+    const connect = async () => {
+      const client = new McpClient({ config, securityPolicy, authProvider })
+      await client.connect()
+      return client
+    }
+
+    return rowId ? withMcpOauthRefreshLock(rowId, connect) : connect()
   }
 
   /**

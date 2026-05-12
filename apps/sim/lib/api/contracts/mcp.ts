@@ -186,6 +186,21 @@ export const mcpToolExecutionBodySchema = z
   .passthrough()
 export type McpToolExecutionBody = z.input<typeof mcpToolExecutionBodySchema>
 
+export const mcpToolResultSchema = z
+  .object({
+    content: z.array(z.unknown()).optional(),
+    isError: z.boolean().optional(),
+    structuredContent: z.unknown().optional(),
+  })
+  .passthrough()
+
+export const mcpToolExecutionResultSchema = z.object({
+  success: z.boolean(),
+  output: mcpToolResultSchema.optional(),
+  error: z.string().optional(),
+})
+export type McpToolExecutionResult = z.output<typeof mcpToolExecutionResultSchema>
+
 export const mcpJsonRpcRequestSchema = z
   .object({
     jsonrpc: z.literal('2.0'),
@@ -399,6 +414,17 @@ export const testMcpServerConnectionContract = defineRouteContract({
     schema: mcpSuccessResponseSchema(mcpServerTestResultSchema),
   },
 })
+
+export const executeMcpToolContract = defineRouteContract({
+  method: 'POST',
+  path: '/api/mcp/tools/execute',
+  body: mcpToolExecutionBodySchema,
+  response: {
+    mode: 'json',
+    schema: mcpSuccessResponseSchema(mcpToolExecutionResultSchema),
+  },
+})
+export type ExecuteMcpToolResponse = ContractJsonResponse<typeof executeMcpToolContract>
 
 export const startMcpOauthQuerySchema = z.object({
   serverId: z.string().min(1, 'serverId is required'),

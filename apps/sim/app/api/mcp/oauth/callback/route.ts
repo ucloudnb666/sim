@@ -9,6 +9,7 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/auth'
 import { withRouteHandler } from '@/lib/core/utils/with-route-handler'
 import {
+  assertSafeOauthServerUrl,
   clearState,
   clearVerifier,
   loadOauthRowByState,
@@ -30,14 +31,33 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function htmlClose(message: string, ok: boolean, serverId?: string): NextResponse {
+type CallbackReason =
+  | 'authorized'
+  | 'provider_error'
+  | 'missing_params'
+  | 'unauthenticated'
+  | 'invalid_state'
+  | 'user_mismatch'
+  | 'server_gone'
+  | 'insecure_url'
+  | 'token_exchange_failed'
+  | 'unknown'
+
+function jsonLiteral(value: string | undefined): string {
+  if (value === undefined) return 'undefined'
+  return JSON.stringify(value).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
+}
+
+function htmlClose(
+  message: string,
+  ok: boolean,
+  reason: CallbackReason,
+  serverId?: string
+): NextResponse {
   const safeMessage = escapeHtml(message)
   const title = ok ? 'Connected' : 'Connection failed'
-  const serverIdLiteral = serverId
-    ? JSON.stringify(serverId).replace(/</g, '\\u003c').replace(/>/g, '\\u003e')
-    : 'undefined'
   const body = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body style="font-family: system-ui; padding: 24px"><p>${safeMessage}</p><script>
-    try { window.opener && window.opener.postMessage({ type: 'mcp-oauth', ok: ${ok ? 'true' : 'false'}, serverId: ${serverIdLiteral} }, window.location.origin) } catch (e) {}
+    try { window.opener && window.opener.postMessage({ type: 'mcp-oauth', ok: ${ok ? 'true' : 'false'}, serverId: ${jsonLiteral(serverId)}, reason: ${jsonLiteral(reason)} }, window.location.origin) } catch (e) {}
     setTimeout(function () { window.close() }, 800)
   </script></body></html>`
   return new NextResponse(body, {
@@ -53,22 +73,22 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
 
   if (errorParam) {
     logger.warn(`MCP OAuth callback received error: ${errorParam}`)
-    return htmlClose(`Authorization failed: ${errorParam}`, false)
+    return htmlClose(`Authorization failed: ${errorParam}`, false, 'provider_error')
   }
   if (!state || !code) {
-    return htmlClose('Missing state or code in callback URL.', false)
+    return htmlClose('Missing state or code in callback URL.', false, 'missing_params')
   }
 
   let serverId: string | undefined
   try {
     const session = await getSession()
     if (!session?.user?.id) {
-      return htmlClose('You must be signed in to complete authorization.', false)
+      return htmlClose('You must be signed in to complete authorization.', false, 'unauthenticated')
     }
 
     const row = await loadOauthRowByState(state)
     if (!row) {
-      return htmlClose('Invalid or expired authorization state.', false)
+      return htmlClose('Invalid or expired authorization state.', false, 'invalid_state')
     }
     serverId = row.mcpServerId
 
@@ -76,6 +96,7 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
       return htmlClose(
         'You must be signed in as the same user that initiated the flow.',
         false,
+        'user_mismatch',
         serverId
       )
     }
@@ -86,7 +107,25 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
       .where(and(eq(mcpServers.id, row.mcpServerId), isNull(mcpServers.deletedAt)))
       .limit(1)
     if (!server || !server.url) {
-      return htmlClose('Server no longer exists.', false, serverId)
+      return htmlClose('Server no longer exists.', false, 'server_gone', serverId)
+    }
+    if (server.workspaceId !== row.workspaceId) {
+      return htmlClose(
+        'Workspace mismatch on authorization callback.',
+        false,
+        'invalid_state',
+        serverId
+      )
+    }
+    try {
+      assertSafeOauthServerUrl(server.url)
+    } catch {
+      return htmlClose(
+        'MCP OAuth requires https (or http://localhost for development).',
+        false,
+        'insecure_url',
+        serverId
+      )
     }
 
     // Burn state before token exchange so a replayed callback cannot reuse it.
@@ -100,12 +139,20 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
         serverUrl: server.url,
         authorizationCode: code,
       })
+    } catch (e) {
+      logger.error('Token exchange failed during MCP OAuth callback', e)
+      return htmlClose(
+        'Token exchange failed. Please try again.',
+        false,
+        'token_exchange_failed',
+        server.id
+      )
     } finally {
       await clearVerifier(row.id)
     }
 
     if (result !== 'AUTHORIZED') {
-      return htmlClose('Authorization did not complete.', false, server.id)
+      return htmlClose('Authorization did not complete.', false, 'token_exchange_failed', server.id)
     }
 
     try {
@@ -115,9 +162,9 @@ export const GET = withRouteHandler(async (request: NextRequest) => {
       logger.warn('Post-auth tools refresh failed', toError(e).message)
     }
 
-    return htmlClose('Connected. You can close this window.', true, server.id)
+    return htmlClose('Connected. You can close this window.', true, 'authorized', server.id)
   } catch (error) {
     logger.error('MCP OAuth callback failed', error)
-    return htmlClose('Authorization failed. Please try again.', false, serverId)
+    return htmlClose('Authorization failed. Please try again.', false, 'unknown', serverId)
   }
 })

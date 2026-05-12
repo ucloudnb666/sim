@@ -18,7 +18,7 @@ import {
   validateMcpServerSsrf,
 } from '@/lib/mcp/domain-check'
 import { getParsedBody, withMcpAuth } from '@/lib/mcp/middleware'
-import { detectMcpAuthType } from '@/lib/mcp/oauth'
+import { detectMcpAuthType, revokeMcpOauthTokens } from '@/lib/mcp/oauth'
 import { mcpService } from '@/lib/mcp/service'
 import {
   createMcpErrorResponse,
@@ -183,6 +183,9 @@ export const POST = withRouteHandler(
           const isRevival = existingServer.deletedAt !== null
           const shouldClearOauth = urlChanged || oauthCredsChanged || isRevival
 
+          if (shouldClearOauth) {
+            await revokeMcpOauthTokens(serverId)
+          }
           await db.transaction(async (tx) => {
             if (shouldClearOauth) {
               await tx.delete(mcpServerOauth).where(eq(mcpServerOauth.mcpServerId, serverId))
@@ -352,6 +355,8 @@ export const DELETE = withRouteHandler(
         logger.info(
           `[${requestId}] Deleting MCP server: ${serverId} from workspace: ${workspaceId}`
         )
+
+        await revokeMcpOauthTokens(serverId)
 
         const [deletedServer] = await db
           .delete(mcpServers)
