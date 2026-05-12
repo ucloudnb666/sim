@@ -186,7 +186,7 @@ export const PATCH = withRouteHandler(
 
         const shouldClearCache =
           urlChanged ||
-          oauthCredsChanged ||
+          credsChanged ||
           body.enabled !== undefined ||
           body.headers !== undefined ||
           body.timeout !== undefined ||
