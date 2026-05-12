@@ -68,6 +68,7 @@ describe('MCP OAuth start route', () => {
       tokens: null,
       codeVerifier: null,
       state: null,
+      stateCreatedAt: null,
       updatedAt: new Date(),
     })
     mcpOauthMockFns.mockLoadPreregisteredClient.mockResolvedValue(undefined)
@@ -119,6 +120,7 @@ describe('MCP OAuth start route', () => {
       tokens: null,
       codeVerifier: null,
       state: 'hashed-active-state',
+      stateCreatedAt: new Date(),
       updatedAt: new Date(),
     })
     const request = new NextRequest(
