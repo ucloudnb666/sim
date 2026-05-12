@@ -76,7 +76,10 @@ export const GET = withRouteHandler(
         userId,
         workspaceId,
       })
-      const hasActiveFlow = !!row.state && row.updatedAt.getTime() > Date.now() - OAUTH_START_TTL_MS
+      const hasActiveFlow =
+        !!row.state &&
+        !!row.stateCreatedAt &&
+        row.stateCreatedAt.getTime() > Date.now() - OAUTH_START_TTL_MS
       if (hasActiveFlow && row.userId && row.userId !== userId) {
         return createMcpErrorResponse(
           new Error('OAuth authorization already in progress'),

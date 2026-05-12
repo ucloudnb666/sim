@@ -28,6 +28,7 @@ export interface McpOauthRow {
   tokens: OAuthTokens | null
   codeVerifier: string | null
   state: string | null
+  stateCreatedAt: Date | null
   updatedAt: Date
 }
 
@@ -97,6 +98,7 @@ export async function getOrCreateOauthRow(params: {
     tokens: null,
     codeVerifier: null,
     state: null,
+    stateCreatedAt: null,
     updatedAt: new Date(),
   }
 }
@@ -124,6 +126,7 @@ async function mapOauthRow(row: RawOauthRow): Promise<McpOauthRow> {
       ? await safeDecrypt(row.id, 'codeVerifier', row.codeVerifier, (d) => d)
       : null,
     state: row.state,
+    stateCreatedAt: row.stateCreatedAt,
     updatedAt: row.updatedAt,
   }
 }
@@ -152,7 +155,7 @@ export async function loadOauthRowByState(state: string): Promise<McpOauthRow | 
     .where(
       and(
         eq(mcpServerOauth.state, hashState(state)),
-        gt(mcpServerOauth.updatedAt, new Date(Date.now() - STATE_TTL_MS))
+        gt(mcpServerOauth.stateCreatedAt, new Date(Date.now() - STATE_TTL_MS))
       )
     )
     .limit(1)
@@ -188,9 +191,10 @@ export async function saveCodeVerifier(rowId: string, verifier: string): Promise
 }
 
 export async function saveState(rowId: string, state: string): Promise<void> {
+  const now = new Date()
   await db
     .update(mcpServerOauth)
-    .set({ state: hashState(state), updatedAt: new Date() })
+    .set({ state: hashState(state), stateCreatedAt: now, updatedAt: now })
     .where(eq(mcpServerOauth.id, rowId))
 }
 
@@ -218,7 +222,7 @@ export async function clearVerifier(rowId: string): Promise<void> {
 export async function clearState(rowId: string): Promise<void> {
   await db
     .update(mcpServerOauth)
-    .set({ state: null, updatedAt: new Date() })
+    .set({ state: null, stateCreatedAt: null, updatedAt: new Date() })
     .where(eq(mcpServerOauth.id, rowId))
 }
 

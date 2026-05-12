@@ -1,0 +1,1 @@
+ALTER TABLE "mcp_server_oauth" ADD COLUMN "state_created_at" timestamp;

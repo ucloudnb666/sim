@@ -2243,6 +2243,13 @@ export const mcpServerOauth = pgTable(
     /** Opaque state mint to correlate the callback. */
     state: text('state'),
 
+    /**
+     * When `state` was minted. Used to expire the active-flow window and the
+     * state replay window independently of `updatedAt`, which is touched by
+     * token refreshes and other writes.
+     */
+    stateCreatedAt: timestamp('state_created_at'),
+
     lastRefreshedAt: timestamp('last_refreshed_at'),
     createdAt: timestamp('created_at').notNull().defaultNow(),
     updatedAt: timestamp('updated_at').notNull().defaultNow(),
