@@ -356,6 +356,20 @@ export const DELETE = withRouteHandler(
           `[${requestId}] Deleting MCP server: ${serverId} from workspace: ${workspaceId}`
         )
 
+        const [ownedServer] = await db
+          .select({ id: mcpServers.id })
+          .from(mcpServers)
+          .where(and(eq(mcpServers.id, serverId), eq(mcpServers.workspaceId, workspaceId)))
+          .limit(1)
+
+        if (!ownedServer) {
+          return createMcpErrorResponse(
+            new Error('Server not found or access denied'),
+            'Server not found',
+            404
+          )
+        }
+
         await revokeMcpOauthTokens(serverId)
 
         const [deletedServer] = await db

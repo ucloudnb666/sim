@@ -105,6 +105,14 @@ export const PATCH = withRouteHandler(
           )
           .limit(1)
 
+        if (!currentServer) {
+          return createMcpErrorResponse(
+            new Error('Server not found or access denied'),
+            'Server not found',
+            404
+          )
+        }
+
         // Adding OAuth client credentials to a non-OAuth server promotes it
         // to OAuth so the connect-with-OAuth UI becomes reachable.
         if (
